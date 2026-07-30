@@ -15,5 +15,6 @@ dispatch. See that repo's `docs/registries.md` for the full maintenance runbook.
   from a live `tools/list` call
 - [api-reference.md](./api-reference.md) — REST endpoint overview by area
 - [openapi.json](./openapi.json) — the full raw spec
+- [context7.json](./context7.json) — parsing rules for Context7
 
 Human-friendly quick start: https://plannie.io/developers
