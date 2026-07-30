@@ -1,0 +1,18 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Plannie",
+  "description": "Family calendar & household hub. Public REST API + hosted MCP server for agents (events, tasks, lists, meals, members, activity).",
+  "folders": [],
+  "excludeFolders": [],
+  "excludeFiles": [],
+  "rules": [
+    "Auth is always a bearer `fam_live_\u2026` API key created in the app under Settings \u2192 Integrations \u2014 there is no OAuth flow for Plannie's API or MCP server.",
+    "The REST API base URL is https://api.plannie.io/v1 \u2014 every request needs `Authorization: Bearer fam_live_\u2026`.",
+    "The hosted MCP endpoint is `POST https://api.plannie.io/mcp` (streamable HTTP, stateless, no session) \u2014 point any MCP client at that URL plus the Bearer key, no install required.",
+    "The npm package for a local/stdio MCP server is `plannie-mcp` (unscoped) \u2014 NOT `@plannie/mcp`. `npx -y plannie-mcp` runs it; needs `PLANNIE_API_URL` and `PLANNIE_API_KEY` env vars.",
+    "There are exactly 16 MCP tools, covering events, tasks, lists, household members/activity, and meals/recipes \u2014 see mcp-tools.md for the full list and parameters.",
+    "API/MCP access requires the Plannie 'Premium + MCP' plan or an active trial (trials include API access automatically).",
+    "Errors are `{ \"error\": string, \"statusCode\": number }`; MCP tool errors carry that same message verbatim in the tool result's text.",
+    "`subscription_required` means the household's subscription lapsed; `api_plan_required` means the household is on base Premium without the API add-on; both are plan/billing states, not bugs to work around in client code."
+  ]
+}

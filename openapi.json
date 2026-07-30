@@ -1,0 +1,2324 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Plannie API",
+    "version": "1.0.0",
+    "description": "[← plannie.io](https://plannie.io)  ·  [Log in to Plannie](https://app.plannie.io/login)\n\nPublic API for agents and integrations. Authenticate with a `fam_live_…` API key as a Bearer token (create one in the app under Settings → Integrations).\n\nAPI/MCP access requires the **Premium + MCP** plan (or an active trial) — see the \"Connect an agent\" section below.\n\n## Keys\n\nKeys are created in the app (Settings → Integrations) with a name, one or more scopes, and an optional expiry. A key with no expiry never expires on its own; it can still be revoked at any time. The key list in the app shows each key's derived status (`active` / `expired` / `revoked` / `subscription_lapsed` / `api_plan_required`).\n\n## Errors\n\nEvery error is `{ \"error\": string, \"statusCode\": number }`. Codes an agent should handle specifically:\n\n| Code | Status | Meaning |\n| --- | --- | --- |\n| `API key expired` | 401 | The key's `expiresAt` has passed. Create a new key. |\n| (invalid/revoked key) | 401 | The key is unknown or was revoked. Create a new key. |\n| `subscription_required` | 403 | The household's Plannie subscription has lapsed. All of its keys pause until it resubscribes — no action needed on the key itself, access resumes automatically on renewal. |\n| `api_plan_required` | 403 | The household is subscribed but on base Plannie Premium, not **Premium + MCP**. Upgrade in Settings → Subscription & Billing to restore access. |\n| `upgrade_required` | 403 | Returned when *creating* a key (`POST /v1/api-keys`) for a household with no active entitlement at all (not even a trial). |\n\n## Connect an agent (MCP)\n\nAny [MCP](https://modelcontextprotocol.io)-compatible client can drive Plannie with the same API keys, two ways:\n\n* **Hosted, no install (recommended):** point the client at `POST https://api.plannie.io/mcp` (streamable HTTP, stateless) with your `fam_live_…` key as a Bearer token.\n* **Local npx package:** `npx -y @plannie/mcp` — a stdio server for clients that can't send HTTP headers (or `--http` for a local streamable-HTTP server). See the [@plannie/mcp README](https://github.com/plannie-io/Plannie/tree/main/packages/mcp).\n\nBoth expose the same 16 tools (events, tasks, lists, members, activity, meals & recipes) and call straight through this REST API, so scopes, key expiry, rate limits, subscription/plan enforcement, and sparkle attribution all apply exactly as documented above — an agent that gets `api_plan_required` from a REST call will see the same message as an MCP tool error.\n\nIn every snippet below, replace `fam_live_…` with your real key.\n\n### Claude Code\n\n```bash\nclaude mcp add --transport http plannie https://api.plannie.io/mcp \\\n  --header \"Authorization: Bearer fam_live_…\"\n```\n\nRun inside a project to register it there, or add `--scope user` to make Plannie available in every project. Verify with `/mcp` inside a session, remove with `claude mcp remove plannie`.\n\n### Claude Desktop & claude.ai\n\nClaude Desktop and claude.ai's **custom connector** UI only supports OAuth-authenticated remote servers, which Plannie doesn't offer yet — use the local package instead. Add to `claude_desktop_config.json` (Claude Desktop → Settings → Developer → Edit config; macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\\Claude\\claude_desktop_config.json`):\n\n```json\n{\n  \"mcpServers\": {\n    \"plannie\": {\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"@plannie/mcp\"],\n      \"env\": {\n        \"PLANNIE_API_URL\": \"https://api.plannie.io/v1\",\n        \"PLANNIE_API_KEY\": \"fam_live_…\"\n      }\n    }\n  }\n}\n```\n\nRestart Claude Desktop after saving; the tools appear under the search-and-tools menu.\n\n### Cursor\n\nAdd to `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` in a repo (that project only):\n\n```json\n{\n  \"mcpServers\": {\n    \"plannie\": {\n      \"url\": \"https://api.plannie.io/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer fam_live_…\" }\n    }\n  }\n}\n```\n\nOr use the one-click **Add to Cursor** button on [plannie.io/developers](https://plannie.io/developers). Enable the server in Cursor Settings → MCP if it doesn't turn on by itself.\n\n### VS Code\n\nNeeds VS Code 1.101+ with MCP support enabled. One-liner:\n\n```bash\ncode --add-mcp '{\"name\":\"plannie\",\"type\":\"http\",\"url\":\"https://api.plannie.io/mcp\",\"headers\":{\"Authorization\":\"Bearer fam_live_…\"}}'\n```\n\nOr add to `.vscode/mcp.json` in your workspace:\n\n```json\n{\n  \"servers\": {\n    \"plannie\": {\n      \"type\": \"http\",\n      \"url\": \"https://api.plannie.io/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer fam_live_…\" }\n    }\n  }\n}\n```\n\n### Codex CLI\n\nCodex talks to MCP servers over stdio, so register the local package:\n\n```bash\ncodex mcp add plannie \\\n  --env PLANNIE_API_URL=https://api.plannie.io/v1 \\\n  --env PLANNIE_API_KEY=fam_live_… \\\n  -- npx -y @plannie/mcp\n```\n\nwhich is equivalent to this in `~/.codex/config.toml`:\n\n```toml\n[mcp_servers.plannie]\ncommand = \"npx\"\nargs = [\"-y\", \"@plannie/mcp\"]\nenv = { PLANNIE_API_URL = \"https://api.plannie.io/v1\", PLANNIE_API_KEY = \"fam_live_…\" }\n```\n\n### Any other client\n\n* Speaks **streamable HTTP with custom headers** → use the hosted URL + Bearer header (the Cursor-style config above).\n* **stdio only** → `npx -y @plannie/mcp` with the two env vars (the Claude Desktop-style config above), or bridge to the hosted server with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote): `npx -y mcp-remote https://api.plannie.io/mcp --header \"Authorization: Bearer fam_live_…\"`.\n\n`@plannie/mcp` env reference: `PLANNIE_API_URL` (required, `https://api.plannie.io/v1`), `PLANNIE_API_KEY` (required), `PLANNIE_AGENT_NAME` (optional — the name shown in the family's activity feed, default \"MCP agent\").\n\n### Troubleshooting\n\n* **401 from `/mcp`** — missing/malformed `Authorization: Bearer fam_live_…` header, or the key was revoked or expired (see the error table above).\n* **403 `api_plan_required` / `subscription_required`** — plan issue, not a config issue; see the error table above.\n* **Tools connect but calls fail with 403** — the key is missing the scope for that tool (e.g. `create_event` needs `calendar.write`). Check the key's scopes in Settings → Integrations.\n* **Client can't send headers** — use the stdio package or `mcp-remote` bridge (see \"Any other client\")."
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "fam_live_… API key"
+      }
+    },
+    "schemas": {}
+  },
+  "paths": {
+    "/v1/households/me/members": {
+      "get": {
+        "summary": "List household members",
+        "tags": [
+          "members"
+        ],
+        "description": "Returns the members of the key’s household — ids, names, roles, colours, and avatars. Use the ids when assigning events, tasks, or check-ins. Available to every valid key; membership changes happen in the app.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/events/": {
+      "get": {
+        "summary": "List calendar events",
+        "tags": [
+          "events"
+        ],
+        "description": "Returns event instances in a date range (default: start of the current month through two months ahead), with recurring events expanded into individual instances. Filter by `memberId` to get one member’s schedule (household-wide \"general\" events are always included); pass `raw=true` to get the underlying event rows without recurrence expansion.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "in": "query",
+            "name": "from",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "in": "query",
+            "name": "to",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "query",
+            "name": "memberId",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "in": "query",
+            "name": "raw",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "forward",
+                "backward"
+              ],
+              "default": "forward"
+            },
+            "in": "query",
+            "name": "direction",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "in": "query",
+            "name": "anchor",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a calendar event",
+        "tags": [
+          "events"
+        ],
+        "description": "Adds an event to the family calendar. Assign members with `memberIds`, or set `isGeneral` for a household-wide event. `recurrenceRule` takes an RFC 5545 RRULE string (e.g. `FREQ=WEEKLY;BYDAY=MO`). Events created through the API are marked with the creating key for sparkle attribution in the app.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "startsAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "endsAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "allDay": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "location": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "nullable": true
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "nullable": true
+                  },
+                  "recurrenceRule": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "memberIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "default": []
+                  },
+                  "reminderMinutes": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "enum": [
+                          -1
+                        ]
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 40320
+                      }
+                    ],
+                    "nullable": true
+                  },
+                  "reminderMinutesList": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 40320
+                    },
+                    "maxItems": 10
+                  },
+                  "isGeneral": {
+                    "type": "boolean"
+                  },
+                  "syncTargets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "memberId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "google",
+                            "outlook"
+                          ]
+                        },
+                        "externalCalendarId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "memberId",
+                        "provider",
+                        "externalCalendarId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "default": []
+                  }
+                },
+                "required": [
+                  "title",
+                  "startsAt",
+                  "endsAt"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/events/{id}": {
+      "get": {
+        "summary": "Get an event",
+        "tags": [
+          "events"
+        ],
+        "description": "Returns one event by id, including its member assignments and any external-calendar sync targets. Recurring events come back as the master record (rule + exceptions), not expanded instances.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update an event",
+        "tags": [
+          "events"
+        ],
+        "description": "Partially updates an event; omitted fields are left unchanged. When editing a recurring event, pass `editScope` (`this` / `this_and_future` / `all`) plus `instanceStartsAt` for the targeted instance.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "startsAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "endsAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "allDay": {
+                    "type": "boolean"
+                  },
+                  "location": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "nullable": true
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "nullable": true
+                  },
+                  "recurrenceRule": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "memberIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "reminderMinutes": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "enum": [
+                          -1
+                        ]
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 40320
+                      }
+                    ],
+                    "nullable": true
+                  },
+                  "reminderMinutesList": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 40320
+                    },
+                    "maxItems": 10
+                  },
+                  "isGeneral": {
+                    "type": "boolean"
+                  },
+                  "syncTargets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "memberId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "google",
+                            "outlook"
+                          ]
+                        },
+                        "externalCalendarId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "memberId",
+                        "provider",
+                        "externalCalendarId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "instanceStartsAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "editScope": {
+                    "type": "string",
+                    "enum": [
+                      "this",
+                      "this_and_future",
+                      "all"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete an event",
+        "tags": [
+          "events"
+        ],
+        "description": "Deletes an event. For recurring events, `scope=this` skips one instance and `scope=this_and_future` truncates the series from `instanceStartsAt`; the default `scope=all` removes the whole event (and its copy on any synced external calendar).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "this",
+                "this_and_future",
+                "all"
+              ],
+              "default": "all"
+            },
+            "in": "query",
+            "name": "scope",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "in": "query",
+            "name": "instanceStartsAt",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/tasks/": {
+      "get": {
+        "summary": "List tasks",
+        "tags": [
+          "tasks"
+        ],
+        "description": "Returns the household’s tasks, oldest due first. Filter by `dueDate` (YYYY-MM-DD), `memberId`, or `completed=true|false`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "in": "query",
+            "name": "dueDate",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "query",
+            "name": "memberId",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "in": "query",
+            "name": "completed",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a task",
+        "tags": [
+          "tasks"
+        ],
+        "description": "Adds a to-do to the task board, assigned to one member (`memberId`), with an optional `dueDate`. API-created tasks carry sparkle attribution in the app.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  },
+                  "memberId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "dueDate": {
+                    "type": "string",
+                    "format": "date",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "label",
+                  "memberId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}": {
+      "patch": {
+        "summary": "Update or complete a task",
+        "tags": [
+          "tasks"
+        ],
+        "description": "Partially updates a task’s label, assignee, or due date. Set `completedAt` to a timestamp to check the task off, or to `null` to un-complete it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  },
+                  "memberId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "dueDate": {
+                    "type": "string",
+                    "format": "date",
+                    "nullable": true
+                  },
+                  "completedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a task",
+        "tags": [
+          "tasks"
+        ],
+        "description": "Permanently removes a task from the board.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/chores/": {
+      "get": {
+        "summary": "List chores",
+        "tags": [
+          "chores"
+        ],
+        "description": "Returns the household’s chores with their recurrence, member assignments, star values, and completion records. Read-only: chores are created, edited, and completed in the app.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/check-ins/": {
+      "get": {
+        "summary": "List check-ins",
+        "tags": [
+          "check-ins"
+        ],
+        "description": "Returns the household’s check-in prompts with their question, assignees, schedule (`daysOfWeek`, `times`), and answer faces.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a check-in",
+        "tags": [
+          "check-ins"
+        ],
+        "description": "Creates a recurring check-in prompt from a preset (`presetKey`, e.g. mood or gratitude — use `custom` with your own `question`), assigned to one or more members on a weekly schedule. If it is already due today, today’s occurrence appears immediately.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "presetKey": {
+                    "type": "string",
+                    "enum": [
+                      "energy",
+                      "happiness",
+                      "health",
+                      "sleep",
+                      "school",
+                      "vibe",
+                      "custom"
+                    ]
+                  },
+                  "question": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "assigneeIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "minItems": 1
+                  },
+                  "daysOfWeek": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 7
+                    },
+                    "minItems": 1
+                  },
+                  "times": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "time": {
+                          "type": "string",
+                          "pattern": "^\\d{2}:\\d{2}$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 40
+                        }
+                      },
+                      "required": [
+                        "time"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1
+                  },
+                  "notify": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "active": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "faces": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "emoji": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40
+                        }
+                      },
+                      "required": [
+                        "emoji",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 2,
+                    "maxItems": 5
+                  }
+                },
+                "required": [
+                  "presetKey",
+                  "question",
+                  "assigneeIds",
+                  "daysOfWeek",
+                  "times"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/check-ins/{id}": {
+      "patch": {
+        "summary": "Update a check-in",
+        "tags": [
+          "check-ins"
+        ],
+        "description": "Partially updates a check-in’s question, assignees, schedule, faces, or `active` flag; omitted fields are left unchanged.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "presetKey": {
+                    "type": "string",
+                    "enum": [
+                      "energy",
+                      "happiness",
+                      "health",
+                      "sleep",
+                      "school",
+                      "vibe",
+                      "custom"
+                    ]
+                  },
+                  "question": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "assigneeIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "minItems": 1
+                  },
+                  "daysOfWeek": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 7
+                    },
+                    "minItems": 1
+                  },
+                  "times": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "time": {
+                          "type": "string",
+                          "pattern": "^\\d{2}:\\d{2}$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 40
+                        }
+                      },
+                      "required": [
+                        "time"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1
+                  },
+                  "notify": {
+                    "type": "boolean"
+                  },
+                  "active": {
+                    "type": "boolean"
+                  },
+                  "faces": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "emoji": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 40
+                        }
+                      },
+                      "required": [
+                        "emoji",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 2,
+                    "maxItems": 5,
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a check-in",
+        "tags": [
+          "check-ins"
+        ],
+        "description": "Soft-deletes a check-in; past answers stay in the family’s history.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/sections/": {
+      "post": {
+        "summary": "Create a list section",
+        "tags": [
+          "lists"
+        ],
+        "description": "Creates a named section (a group of lists), appended after the existing sections.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/sections/reorder": {
+      "patch": {
+        "summary": "Reorder sections",
+        "tags": [
+          "lists"
+        ],
+        "description": "Persists a new display order for the household’s sections; `ids` is the full ordered id list.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "ids"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/sections/{id}": {
+      "patch": {
+        "summary": "Rename a section",
+        "tags": [
+          "lists"
+        ],
+        "description": "Changes the section’s name.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a section",
+        "tags": [
+          "lists"
+        ],
+        "description": "Deletes an empty section. Returns 422 if the section still contains lists — move or delete them first.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/pexels/search": {
+      "get": {
+        "summary": "Search cover photos",
+        "tags": [
+          "lists"
+        ],
+        "description": "Searches Pexels for list cover photos (server-side proxy). Use a result’s photo id with `POST /v1/lists/{id}/cover/pexels`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "in": "query",
+            "name": "query",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 1
+            },
+            "in": "query",
+            "name": "page",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/": {
+      "get": {
+        "summary": "Get all lists",
+        "tags": [
+          "lists"
+        ],
+        "description": "Returns the household’s list sections with their lists and nested blocks (checklist items, headings, text), in display order, plus a `remainingCount` of unchecked items per list.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a list",
+        "tags": [
+          "lists"
+        ],
+        "description": "Creates an empty list at the end of the given section.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "sectionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "name",
+                  "sectionId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/reorder": {
+      "patch": {
+        "summary": "Reorder lists in a section",
+        "tags": [
+          "lists"
+        ],
+        "description": "Persists a new display order for a section’s lists; `ids` is the full ordered id list.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sectionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "sectionId",
+                  "ids"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{id}": {
+      "patch": {
+        "summary": "Rename a list",
+        "tags": [
+          "lists"
+        ],
+        "description": "Changes the list’s name; everything else is untouched.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a list",
+        "tags": [
+          "lists"
+        ],
+        "description": "Permanently deletes the list and everything on it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{id}/settings": {
+      "patch": {
+        "summary": "Update list settings",
+        "tags": [
+          "lists"
+        ],
+        "description": "Updates display settings: `icon` (emoji), `colorKey` (member colour, or null to clear), `favorite`, and `hideDone` (hide checked-off items).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "icon": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "colorKey": {
+                    "type": "string",
+                    "enum": [
+                      "coral",
+                      "tangerine",
+                      "sunshine",
+                      "leaf",
+                      "teal",
+                      "sky",
+                      "grape",
+                      "berry"
+                    ],
+                    "nullable": true
+                  },
+                  "favorite": {
+                    "type": "boolean"
+                  },
+                  "hideDone": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{id}/move": {
+      "patch": {
+        "summary": "Move a list to another section",
+        "tags": [
+          "lists"
+        ],
+        "description": "Moves the list to the end of the given section. A no-op if it is already there.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sectionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "sectionId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{id}/cover": {
+      "post": {
+        "summary": "Upload a list cover image",
+        "tags": [
+          "lists"
+        ],
+        "description": "Sets the list’s cover from a multipart image upload (max 8 MB; re-encoded server-side). Replaces any previous cover image.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a list cover",
+        "tags": [
+          "lists"
+        ],
+        "description": "Deletes the cover image and reverts the list to its generated gradient cover.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{id}/cover/pexels": {
+      "post": {
+        "summary": "Set a list cover from Pexels",
+        "tags": [
+          "lists"
+        ],
+        "description": "Sets the list’s cover to a Pexels photo found via `GET /v1/lists/pexels/search`; the server fetches and stores the image with photographer attribution.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "pexelsPhotoId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "pexelsPhotoId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{id}/cover/visibility": {
+      "patch": {
+        "summary": "Hide or show a list cover",
+        "tags": [
+          "lists"
+        ],
+        "description": "Toggles the cover’s visibility without deleting the stored image.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hidden": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "hidden"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{listId}/blocks/": {
+      "post": {
+        "summary": "Add a block to a list",
+        "tags": [
+          "lists"
+        ],
+        "description": "Adds a block — `task` (checklist item), `header`, `paragraph`, or `divider`. Appended at the end by default; pass `afterBlockId` to insert after a sibling, or `parentId` (a task block) to create a subtask. Subtasks cannot be nested further.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "task",
+                      "header",
+                      "paragraph",
+                      "divider"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "parentId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "afterBlockId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "listId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{listId}/blocks/{blockId}": {
+      "patch": {
+        "summary": "Update a block",
+        "tags": [
+          "lists"
+        ],
+        "description": "Updates a block’s `content`, checks a task off (`done`), or sets/clears its `dueDate` and assigned `memberId`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "done": {
+                    "type": "boolean"
+                  },
+                  "dueDate": {
+                    "type": "string",
+                    "format": "date-time",
+                    "nullable": true
+                  },
+                  "memberId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "listId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "blockId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a block",
+        "tags": [
+          "lists"
+        ],
+        "description": "Removes a block from the list; a task’s subtasks are removed with it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "listId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "blockId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{listId}/blocks/{blockId}/convert": {
+      "patch": {
+        "summary": "Convert a block to another type",
+        "tags": [
+          "lists"
+        ],
+        "description": "Changes a block’s type (e.g. paragraph → task). Converting a task that has subtasks deletes those subtasks — confirm with the user first.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "task",
+                      "header",
+                      "paragraph",
+                      "divider"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "listId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "blockId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{listId}/blocks/reorder": {
+      "patch": {
+        "summary": "Reorder blocks",
+        "tags": [
+          "lists"
+        ],
+        "description": "Persists a new order for the blocks at one level of the list: root blocks when `parentId` is omitted, or one task’s subtasks when it is set. `ids` is the full ordered id list for that level.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "parentId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true
+                  },
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "ids"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "listId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/lists/{listId}/blocks/{blockId}/move": {
+      "patch": {
+        "summary": "Move a block to another list",
+        "tags": [
+          "lists"
+        ],
+        "description": "Moves a root-level block (with any subtasks) to the end of another list. A no-op if the target is the current list.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "targetListId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "targetListId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "listId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "blockId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/activity/": {
+      "get": {
+        "summary": "List activity",
+        "tags": [
+          "activity"
+        ],
+        "description": "Returns the household activity feed, newest first — every change made in the app or through the API, attributed to the member or API key (and agent name) that made it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "in": "query",
+            "name": "limit",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/recipes/": {
+      "get": {
+        "summary": "List recipes",
+        "tags": [
+          "recipes"
+        ],
+        "description": "Returns the household’s active (non-archived) recipes: name, emoji, prep time, ingredients, and instructions.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a recipe",
+        "tags": [
+          "recipes"
+        ],
+        "description": "Adds a recipe to the household recipe box. `ingredients` is a plain list of strings — it also feeds grocery-list generation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "emoji": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8,
+                    "default": "🍽️"
+                  },
+                  "prepMinutes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1440
+                  },
+                  "ingredients": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxItems": 100,
+                    "default": []
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "maxLength": 5000
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/recipes/{id}": {
+      "patch": {
+        "summary": "Update a recipe",
+        "tags": [
+          "recipes"
+        ],
+        "description": "Partially updates a recipe; omitted fields are left unchanged.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "emoji": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8,
+                    "default": "🍽️"
+                  },
+                  "prepMinutes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1440
+                  },
+                  "ingredients": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxItems": 100,
+                    "default": []
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "maxLength": 5000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a recipe",
+        "tags": [
+          "recipes"
+        ],
+        "description": "Archives the recipe (it disappears from the recipe box); meals already scheduled with it keep working.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/meals/grocery": {
+      "post": {
+        "summary": "Generate a grocery list from the meal plan",
+        "tags": [
+          "meals"
+        ],
+        "description": "Collects the ingredients of every meal scheduled in the week starting at `weekStart`, dedupes them, and adds them as unchecked items to a list — `listId` if given, otherwise the household’s \"Groceries\" list (created if missing). Ingredients already on the list are skipped.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "weekStart": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "listId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "weekStart"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/meals/": {
+      "get": {
+        "summary": "Get the meal plan for a week",
+        "tags": [
+          "meals"
+        ],
+        "description": "Returns the scheduled meals (with their full recipes) for the 7 days starting at `weekStart` (YYYY-MM-DD).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            "in": "query",
+            "name": "weekStart",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "summary": "Schedule a meal",
+        "tags": [
+          "meals"
+        ],
+        "description": "Puts a recipe on the plan at `date` × `mealType`. Breakfast/lunch/dinner cells hold up to two meals (`slot` 0 and 1, side by side); snack cells hold one. Omitting `slot` takes the first free one.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "mealType": {
+                    "type": "string",
+                    "enum": [
+                      "breakfast",
+                      "morning_snack",
+                      "lunch",
+                      "afternoon_snack",
+                      "dinner",
+                      "evening_snack"
+                    ]
+                  },
+                  "recipeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "slot": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "enum": [
+                          0
+                        ]
+                      },
+                      {
+                        "type": "number",
+                        "enum": [
+                          1
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "date",
+                  "mealType",
+                  "recipeId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/meals/{id}": {
+      "patch": {
+        "summary": "Move a scheduled meal",
+        "tags": [
+          "meals"
+        ],
+        "description": "Moves an already-scheduled meal to a different day, meal type, or slot.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "mealType": {
+                    "type": "string",
+                    "enum": [
+                      "breakfast",
+                      "morning_snack",
+                      "lunch",
+                      "afternoon_snack",
+                      "dinner",
+                      "evening_snack"
+                    ]
+                  },
+                  "slot": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "enum": [
+                          0
+                        ]
+                      },
+                      {
+                        "type": "number",
+                        "enum": [
+                          1
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "date",
+                  "mealType",
+                  "slot"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a meal from the plan",
+        "tags": [
+          "meals"
+        ],
+        "description": "Takes a scheduled meal off the plan. The recipe itself is untouched.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "events",
+      "description": "Calendar events on the family calendar, including recurring events. Scopes: `calendar.read` / `calendar.write`."
+    },
+    {
+      "name": "tasks",
+      "description": "One-off to-dos on the family task board. Scopes: `tasks.read` / `tasks.write`."
+    },
+    {
+      "name": "chores",
+      "description": "Recurring chores with per-member assignments and star values. Read-only through the API (`chores.read`); chores are managed and completed in the app."
+    },
+    {
+      "name": "check-ins",
+      "description": "Recurring check-in prompts family members answer (mood, gratitude, …). Scopes: `checkins.read` / `checkins.write`."
+    },
+    {
+      "name": "lists",
+      "description": "Lists (grocery, packing, notes) with sections and blocks — checklist items, headings and text. Scopes: `lists.read` / `lists.write`."
+    },
+    {
+      "name": "meals",
+      "description": "The weekly meal plan: breakfast, lunch, dinner and snack slots per day. Scopes: `meals.read` / `meals.write`."
+    },
+    {
+      "name": "recipes",
+      "description": "The household recipe box that meal planning draws from. Scopes: `meals.read` / `meals.write`."
+    },
+    {
+      "name": "members",
+      "description": "Read-only household member directory — use it to resolve the member ids referenced by events, tasks, chores and check-ins. Available to any valid key, no scope required."
+    },
+    {
+      "name": "activity",
+      "description": "The household activity feed: an audit trail of changes with actor attribution (app member or API key). Scope: `activity.read`."
+    }
+  ]
+}
